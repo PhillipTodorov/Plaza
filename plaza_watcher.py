@@ -1,7 +1,21 @@
 import sys
 import subprocess
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame, QTextEdit, QPushButton
+import threading
+from flask import Flask, request
+from flask_cors import CORS
+from flask_cors import CORS
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame, QPushButton
+from PyQt6.QtCore import QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QFont
+
+flask_app = Flask(__name__)
+CORS(flask_app)
+CORS(flask_app)
+
+class Bridge(QObject):
+    message_received = pyqtSignal(str)
+
+bridge = Bridge()
 
 def run_command(cmd):
     try:
@@ -9,6 +23,12 @@ def run_command(cmd):
         return (r.stdout + r.stderr).strip()
     except Exception as e:
         return str(e)
+
+@flask_app.route('/message', methods=['POST'])
+def receive():
+    text = request.json.get('text', '')
+    bridge.message_received.emit(text)
+    return 'ok'
 
 class BlockCard(QFrame):
     def __init__(self, code, parent=None):
@@ -50,13 +70,7 @@ class Plaza(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
-        self.box = QTextEdit()
-        self.box.setPlaceholderText("Paste anything here...")
-        self.box.setFixedHeight(80)
-        self.box.setStyleSheet("QTextEdit { background: #1e1e1e; border: 1px solid #444; border-radius: 6px; color: #e0e0e0; padding: 6px; }")
-        self.box.textChanged.connect(self.parse)
-        root.addWidget(self.box)
-        self.status = QLabel("Paste above.")
+        self.status = QLabel("Waiting for Claude...")
         self.status.setStyleSheet("color: #888; font-size: 12px;")
         root.addWidget(self.status)
         self.scroll = QScrollArea()
@@ -68,22 +82,21 @@ class Plaza(QWidget):
         self.inner_layout.setSpacing(8)
         self.scroll.setWidget(self.inner)
         root.addWidget(self.scroll)
+        bridge.message_received.connect(self.receive)
 
-    def parse(self):
-        text = self.box.toPlainText().strip()
+    def receive(self, text):
         for i in reversed(range(self.inner_layout.count())):
             w = self.inner_layout.itemAt(i).widget()
             if w: w.deleteLater()
-        if not text:
-            self.status.setText("Paste above.")
-            return
         lines = [l.strip() for l in text.splitlines() if l.strip()]
-        self.status.setText(f"{len(lines)} line{'s' if len(lines)>1 else ''} found.")
+        self.status.setText(f"{len(lines)} line{'s' if len(lines)>1 else ''} received.")
         for line in lines:
             self.inner_layout.addWidget(BlockCard(line))
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
+    qapp = QApplication(sys.argv)
     w = Plaza()
+    t = threading.Thread(target=lambda: flask_app.run(port=5000), daemon=True)
+    t.start()
     w.show()
-    sys.exit(app.exec())
+    sys.exit(qapp.exec())
