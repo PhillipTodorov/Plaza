@@ -3,19 +3,22 @@ import subprocess
 import threading
 from flask import Flask, request
 from flask_cors import CORS
-from flask_cors import CORS
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame, QPushButton
-from PyQt6.QtCore import QTimer, pyqtSignal, QObject
+from PyQt6.QtCore import pyqtSignal, QObject
 from PyQt6.QtGui import QFont
 
 flask_app = Flask(__name__)
-CORS(flask_app)
 CORS(flask_app)
 
 class Bridge(QObject):
     message_received = pyqtSignal(str)
 
 bridge = Bridge()
+
+RISKY = ["rm ", "sudo", "pkill", "dd ", "mkfs", "format", "chmod", "chown", "shutdown", "reboot"]
+
+def is_risky(cmd):
+    return any(r in cmd for r in RISKY)
 
 def run_command(cmd):
     try:
@@ -34,6 +37,8 @@ class BlockCard(QFrame):
     def __init__(self, code, parent=None):
         super().__init__(parent)
         self.code = code
+        risky = is_risky(code)
+        color = "#ff4444" if risky else "#4caf50"
         self.setStyleSheet("QFrame { border: 1px solid #444; border-radius: 6px; background: #1e1e1e; margin-bottom: 4px; }")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
@@ -44,7 +49,7 @@ class BlockCard(QFrame):
         code_label.setWordWrap(True)
         layout.addWidget(code_label)
         self.run_btn = QPushButton("Run")
-        self.run_btn.setStyleSheet("QPushButton { background: #2a2a2a; border: 1px solid #4caf50; border-radius: 4px; color: #4caf50; font-size: 11px; padding: 4px; }")
+        self.run_btn.setStyleSheet(f"QPushButton {{ background: #2a2a2a; border: 1px solid {color}; border-radius: 4px; color: {color}; font-size: 11px; padding: 4px; }}")
         self.run_btn.clicked.connect(self.run_code)
         layout.addWidget(self.run_btn)
         self.out = QLabel("")
@@ -67,6 +72,7 @@ class Plaza(QWidget):
         self.setWindowTitle("Plaza")
         self.setMinimumWidth(500)
         self.setStyleSheet("QWidget { background: #141414; color: #e0e0e0; }")
+        self.seen = set()
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
@@ -85,13 +91,15 @@ class Plaza(QWidget):
         bridge.message_received.connect(self.receive)
 
     def receive(self, text):
-        for i in reversed(range(self.inner_layout.count())):
-            w = self.inner_layout.itemAt(i).widget()
-            if w: w.deleteLater()
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
-        self.status.setText(f"{len(lines)} line{'s' if len(lines)>1 else ''} received.")
-        for line in lines:
-            self.inner_layout.addWidget(BlockCard(line))
+        blocks = [b.strip() for b in text.split('|||') if b.strip() and not b.strip().startswith('javascript') and len(b.strip()) < 500]
+        new_blocks = [b for b in blocks if b not in self.seen]
+        if not new_blocks:
+            return
+        for block in new_blocks:
+            self.seen.add(block)
+            self.inner_layout.addWidget(BlockCard(block))
+        count = self.inner_layout.count()
+        self.status.setText(f"{count} block{'s' if count>1 else ''} collected.")
 
 if __name__ == "__main__":
     qapp = QApplication(sys.argv)
